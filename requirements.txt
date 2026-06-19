@@ -1,0 +1,55 @@
+from flask import Flask, request, send_file, render_template_string
+import yt_dlp, os, subprocess, uuid
+
+app = Flask(__name__)
+os.makedirs("output", exist_ok=True)
+
+PAGE = """<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remix AI</title><style>body{font:16px Arial;max-width:600px;margin:40px auto;padding:20px;background:#0a0a0a;color:#eee}
+input,textarea,select{width:100%;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #333;background:#111;color:#eee}
+button{width:100%;padding:14px;background:#1DB954;border:0;border-radius:6px;font-weight:bold;cursor:pointer;color:#000}
+#s{margin:15px 0;padding:12px;background:#111;border-radius:6px;min-height:20px}.note{font-size:12px;color:#777}</style></head>
+<body><h2>🎤 Remix AI 1-File</h2><p class="note">YouTube link → Testo nuovo → Voce generica → MP3</p>
+<input id="u" placeholder="https://youtube.com/watch?v=...">
+<button onclick="x()" id="b">Genera</button><div id="s">Pronto</div>
+<textarea id="t" placeholder="Incolla testo modificato..." rows="7"></textarea>
+<select id="v"><option value="male.wav">Voce Maschile</option><option value="female.wav">Voce Femminile</option></select>
+<p class="note">Crea cartella /voices e metti male.wav + female.wav da freesound.org CC0</p>
+<a id="d" style="display:none">⬇️ Scarica MP3</a>
+<script>async function x(){let b=document.getElementById("b"),s=document.getElementById("s");b.disabled=1;s.innerText="1. Download...";
+let id=Date.now();let r=await fetch("/p",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:u.value,id:id})});
+let j=await r.json();if(j.e){s.innerText="Errore: "+j.e;b.disabled=0;return;}s.innerText="2. Voce AI + mix...";
+r=await fetch("/g",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,text:t.value,voice:v.value})});
+if(!r.ok){s.innerText="Errore";b.disabled=0;return;}let blob=await r.blob();let url=URL.createObjectURL(blob);
+let d=document.getElementById("d");d.href=url;d.download="remix.mp3";d.style.display="block";s.innerText="Fatto!";b.disabled=0;}</script></body></html>"""
+
+@app.route("/")
+def h(): return render_template_string(PAGE)
+
+@app.route("/p", methods=["POST"])
+def p():
+    try:
+        d=request.json; uid=d["id"]
+        yt_dlp.YoutubeDL({'format':'bestaudio','outtmpl':f'output/{uid}.%(ext)s','postprocessors':[{'key':'FFmpegExtractAudio','preferredcodec':'wav'}],'quiet':True}).download([d["url"]])
+        subprocess.run(["demucs","-n","htdemucs",f"output/{uid}.wav","-o","output/","--two-stems","vocals"],check=True,stdout=subprocess.DEVNULL)
+        return {"ok":1}
+    except Exception as e: return {"e":str(e)},500
+
+@app.route("/g", methods=["POST"])
+def g():
+    try:
+        d=request.json; uid=d["id"]
+        from TTS.api import TTS
+        TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2",gpu=False).tts_to_file(text=d["text"],speaker_wav=f"voices/{d['voice']}",language="it",file_path=f"output/{uid}_v.wav")
+        subprocess.run(["ffmpeg","-i",f"output/htdemucs/{uid}/no_vocals.wav","-i",f"output/{uid}_v.wav","-filter_complex","amix=inputs=2:duration=longest","-y",f"output/{uid}.mp3","-loglevel","error"],check=True)
+        return send_file(f"output/{uid}.mp3",as_attachment=True,download_name="remix.mp3")
+    except Exception as e: return {"e":str(e)},500
+
+if __name__=="__main__": app.run(host="0.0.0.0",port=5000)
+flask
+yt-dlp
+demucs
+TTS
+torch
+torchaudio
+ffmpeg-python
